@@ -9,6 +9,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 import tensorflow as tf
 from tensorflow.keras.preprocessing import image
+from tensorflow.keras import backend as K # 💡 FIXED: RAM စနစ်ကို ထိန်းချုပ်ရန် ပေါင်းထည့်ခြင်း
 
 app = Flask(__name__)
 
@@ -25,8 +26,19 @@ if os.path.exists(MODEL_PATH):
 else:
     raise FileNotFoundError(f"Error: {MODEL_PATH} ဖိုင်အား ရှာမတွေ့ပါ။ Folder ထဲတွင် သေချာထည့်ပေးပါ။")
 
-# 💡 IMPORTANT: Colab တုန်းက ထွက်လာတဲ့ စာလုံးအကြီးအသေးအတိုင်း ကွက်တိ ပြန်စီထားခြင်း
-class_names = ['Bacterial leaf blight', 'Rice Blast']
+# 💡 FIXED: Colab Cell 2 က ထွက်လာတဲ့ စာလုံးအကြီးအသေး ၃၆ ခုစာရင်းအတိုင်း ကွက်တိပြင်ဆင်ထားခြင်း ဖြစ်ပါသည်
+class_names = [
+    'Alternaria_D', 'Anthracnose - Colletotrichum', 'Bacterialblight', 'Blast', 
+    'Botrytis Leaf Blight', 'Brownspot', 'Bulb Rot', 'Bulb_blight-D', 'Caterpillar-P', 
+    'Downy mildew', 'Fusarium-D', 'Healthy leaves', 'Iris yellow virus_augment', 
+    'Purple blotch', 'Rust', 'Tomato___Bacterial_spot', 'Tomato___Early_blight', 
+    'Tomato___Late_blight', 'Tomato___Leaf_Mold', 'Tomato___Septoria_leaf_spot', 
+    'Tomato___Spider_mites Two-spotted_spider_mite', 'Tomato___Target_Spot', 
+    'Tomato___Tomato_Yellow_Leaf_Curl_Virus', 'Tomato___Tomato_mosaic_virus', 
+    'Tomato___healthy', 'Tungro', 'Virosis-D', 'Xanthomonas Leaf Blight', 
+    'healthy', 'leaf curl', 'leaf spot', 'non_plant', 'stemphylium Leaf Blight', 
+    'whitefly', 'yellowish'
+]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # API ENDPOINT FOR IMAGE PREDICTION
@@ -68,8 +80,18 @@ def predict():
         predicted_class_idx = np.argmax(predictions[0])
         confidence = float(np.max(predictions[0]))
         
-        # 💡 Threshold Option: စိတ်ချရမှု 60% ထက်နည်းရင် ရောဂါရှာမတွေ့ဟု သတ်မှတ်နိုင်သည်
-        if confidence < 0.60:
+        predicted_name = class_names[predicted_class_idx]
+
+        # 💡 💡 FIXED: အကယ်၍ အပင်ပုံမဟုတ်ဘဲ လူမျက်နှာ/တခြားအရာများ တင်ပါက တိုက်ရိုက်သိရှိစေမည့် Filter Logic
+        if predicted_name == 'non_plant':
+            return jsonify({
+                'success': False,
+                'disease_name': 'Unknown',
+                'error': 'စစ်ဆေးမှု မအောင်မြင်ပါ။ ဓာတ်ပုံသည် စိုက်ပျိုးရေးသီးနှံ သို့မဟုတ် အပင်ပုံ မဟုတ်ပါဗျာ။'
+            })
+
+        # 💡 Threshold Option: စိတ်ချရမှု 55% ထက်နည်းရင် ရောဂါရှာမတွေ့ဟု သတ်မှတ်မည်
+        if confidence < 0.55:
             return jsonify({
                 'success': False, 
                 'disease_name': '', 
@@ -79,8 +101,8 @@ def predict():
         # 6. အောင်မြင်သော ရလဒ်အား PHP ဝဘ်ဆိုက်ဆီ JSON ဖြင့် ပြန်လည်ပေးပို့ခြင်း
         return jsonify({
             'success': True,
-            'disease_name': class_names[predicted_class_idx], # 'Rice Blast' သို့မဟုတ် 'Bacterial leaf blight' ထွက်မည်
-            'confidence': round(confidence * 100, 2),        # ရာခိုင်နှုန်းအဖြစ် ပြောင်းခြင်း (ဥပမာ - 94.5)
+            'disease_name': predicted_name, 
+            'confidence': round(confidence * 100, 2),
             'error': ''
         })
 
@@ -90,11 +112,15 @@ def predict():
             'disease_name': '', 
             'error': f'ဆာဗာအတွင်းပိုင်း Error ဖြစ်ပွားပါသည်: {str(e)}'
         }), 500
+        
+    finally:
+        # 💡 FIXED FOR RENDER: ဓာတ်ပုံခန့်မှန်းပြီးတိုင်း ခေါင်းထဲက ယာယီ Cache RAM များကို 
+        # ချက်ချင်းပြန်ရှင်းပစ်ခြင်းဖြင့် 512MB RAM Limit ကြောင့် Server Crash ဖြစ်ခြင်းကို ကာကွယ်ပေးပါသည်
+        K.clear_session()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SERVER ENTRY POINT
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
-    # 💡 CRITICAL FOR RENDER: Render cloud သည် Port နံပါတ်များကို environment ထဲမှ dynamic ပေးတတ်၍ ဖြစ်ပါသည်
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False) # Production အတွက် debug=False ထားပါသည်
+    app.run(host='0.0.0.0', port=port, debug=False)
