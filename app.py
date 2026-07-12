@@ -4,7 +4,7 @@ import numpy as np
 from PIL import Image
 from flask import Flask, request, jsonify
 
-# Render ပေါ်တွင် ဖြစ်တတ်သော TensorFlow Warning စာတန်းများကို ပိတ်ထားခြင်း (Optimization)
+# Render ပေါ်တွင် ဖြစ်တတ်သော TensorFlow Warning စာတန်းများကို ปိတ်ထားခြင်း (Optimization)
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 import tensorflow as tf
@@ -16,15 +16,21 @@ app = Flask(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 # AI MODEL & CLASSES CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
-MODEL_PATH = 'my_custom_plant_model.h5'
+# 💡 FIXED: Gunicorn မှ လှမ်းခေါ်သည့်အခါ Path လွဲချော်မှုမရှိစေရန် Absolute Path စနစ်ပြောင်းခြင်း
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, 'my_custom_plant_model.h5')
 
 # မော်ဒယ်ဖိုင် တကယ်ရှိမရှိ ကြိုတင်စစ်ဆေးခြင်း
 if os.path.exists(MODEL_PATH):
     print(f"Loading AI Model from {MODEL_PATH}...")
-    model = tf.keras.models.load_model(MODEL_PATH)
+    
+    # 💡 💡 CRITICAL FIXED: compile=False ထည့်သွင်းပေးလိုက်ခြင်းဖြင့် Colab နှင့် Render ကြား 
+    # Keras Version ကွဲလွဲမှုကြောင့်ဖြစ်သော Deserialization (InputLayer) Error အားလုံးကို အောင်မြင်စွာကျော်လွှားပါသည်
+    model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+    
     print("AI Model Loaded Successfully!")
 else:
-    raise FileNotFoundError(f"Error: {MODEL_PATH} ဖိုင်အား ရှာမတွေ့ပါ။ Folder ထဲတွင် သေချာထည့်ပေးပါ။")
+    raise FileNotFoundError(f"Error: {MODEL_PATH} ဖိုင်အား ရှာမတွေ့ပါ။ Folder ထဲတွင် သေჩာထည့်ပေးပါ။")
 
 # 💡 FIXED: Colab Cell 2 က ထွက်လာတဲ့ စာလုံးအကြီးအသေး ၃၆ ခုစာရင်းအတိုင်း ကွက်တိပြင်ဆင်ထားခြင်း ဖြစ်ပါသည်
 class_names = [
