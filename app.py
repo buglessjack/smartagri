@@ -3,36 +3,22 @@ import io
 import numpy as np
 from PIL import Image
 from flask import Flask, request, jsonify
-
-# Render ပေါ်တွင် ဖြစ်တတ်သော TensorFlow Warning စာတန်းများကို ปိတ်ထားခြင်း (Optimization)
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
-import tensorflow as tf
-from tensorflow.keras.preprocessing import image
-from tensorflow.keras import backend as K # 💡 FIXED: RAM စနစ်ကို ထိန်းချုပ်ရန် ပေါင်းထည့်ခြင်း
+import tflite_runtime.interpreter as tflite # 💡 FIXED: TensorFlow အစား TFLite သုံးခြင်း
 
 app = Flask(__name__)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# AI MODEL & CLASSES CONFIGURATION
-# ─────────────────────────────────────────────────────────────────────────────
-# 💡 FIXED: Gunicorn မှ လှမ်းခေါ်သည့်အခါ Path လွဲချော်မှုမရှိစေရန် Absolute Path စနစ်ပြောင်းခြင်း
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, 'my_custom_plant_model.h5')
+MODEL_PATH = 'my_custom_plant_model.tflite'
 
-# မော်ဒယ်ဖိုင် တကယ်ရှိမရှိ ကြိုတင်စစ်ဆေးခြင်း
+# TFLite Interpreter အား စတင်ပတ်မောင်းခြင်း (RAM 10MB သာ သုံးပါသည်)
 if os.path.exists(MODEL_PATH):
-    print(f"Loading AI Model from {MODEL_PATH}...")
-    
-    # 💡 💡 CRITICAL FIXED: compile=False ထည့်သွင်းပေးလိုက်ခြင်းဖြင့် Colab နှင့် Render ကြား 
-    # Keras Version ကွဲလွဲမှုကြောင့်ဖြစ်သော Deserialization (InputLayer) Error အားလုံးကို အောင်မြင်စွာကျော်လွှားပါသည်
-    model = tf.keras.models.load_model(MODEL_PATH, compile=False)
-    
-    print("AI Model Loaded Successfully!")
+    interpreter = tflite.Interpreter(model_path=MODEL_PATH)
+    interpreter.allocate_tensors()
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+    print("🚀 TFLite AI Model Loaded Successfully into Minimal RAM!")
 else:
-    raise FileNotFoundError(f"Error: {MODEL_PATH} ဖိုင်အား ရှာမတွေ့ပါ။ Folder ထဲတွင် သေჩာထည့်ပေးပါ။")
+    raise FileNotFoundError(f"Error: {MODEL_PATH} ဖိုင်အား ရှာမတွေ့ပါ။")
 
-# 💡 FIXED: Colab Cell 2 က ထွက်လာတဲ့ စာလုံးအကြီးအသေး ၃၆ ခုစာရင်းအတိုင်း ကွက်တိပြင်ဆင်ထားခြင်း ဖြစ်ပါသည်
 class_names = [
     'Alternaria_D', 'Anthracnose - Colletotrichum', 'Bacterialblight', 'Blast', 
     'Botrytis Leaf Blight', 'Brownspot', 'Bulb Rot', 'Bulb_blight-D', 'Caterpillar-P', 
@@ -46,87 +32,44 @@ class_names = [
     'whitefly', 'yellowish'
 ]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# API ENDPOINT FOR IMAGE PREDICTION
-# ─────────────────────────────────────────────────────────────────────────────
 @app.route('/predict', methods=['POST'])
 def predict():
-    # 1. ဖိုင်ပါမပါ စစ်ဆေးခြင်း
     if 'file' not in request.files:
-        return jsonify({
-            'success': False, 
-            'disease_name': '', 
-            'error': 'ဓာတ်ပုံဖိုင် ပေးပို့မှု မရှိပါ (No file uploaded).'
-        }), 400
-        
+        return jsonify({'success': False, 'disease_name': '', 'error': 'No file uploaded.'}), 400
     file = request.files['file']
     
-    if file.filename == '':
-        return jsonify({
-            'success': False, 
-            'disease_name': '', 
-            'error': 'ဖိုင်အမည် ဗလာဖြစ်နေပါသည် (Empty filename).'
-        }), 400
-
     try:
-        # 2. ဓာတ်ပုံအား ဖတ်ရှုပြီး RGB သို့ ပြောင်းလဲခြင်း
         img_bytes = file.read()
-        img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
+        img = Image.open(io.BytesIO(img_bytes)).convert('RGB').resize((224, 224))
         
-        # 3. MobileNetV2 standard size (224x224) ဖြစ်အောင် အရွယ်အစားပြန်ညှိခြင်း
-        img = img.resize((224, 224))
-        
-        # 4. Image Preprocessing (Normalize to 0-1)
-        x = image.img_to_array(img)
+        # Preprocessing
+        x = np.array(img, dtype=np.float32) / 255.0
         x = np.expand_dims(x, axis=0)
-        x = x / 255.0  # Rescale values
         
-        # 5. AI မော်ဒယ်အား ခန့်မှန်းခိုင်းခြင်း (Inference)
-        predictions = model.predict(x)
+        # TFLite Inference တွက်ချက်ခြင်း
+        interpreter.set_tensor(input_details[0]['index'], x)
+        interpreter.invoke()
+        predictions = interpreter.get_tensor(output_details[0]['index'])
+        
         predicted_class_idx = np.argmax(predictions[0])
         confidence = float(np.max(predictions[0]))
-        
         predicted_name = class_names[predicted_class_idx]
 
-        # 💡 💡 FIXED: အကယ်၍ အပင်ပုံမဟုတ်ဘဲ လူမျက်နှာ/တခြားအရာများ တင်ပါက တိုက်ရိုက်သိရှိစေမည့် Filter Logic
         if predicted_name == 'non_plant':
-            return jsonify({
-                'success': False,
-                'disease_name': 'Unknown',
-                'error': 'စစ်ဆေးမှု မအောင်မြင်ပါ။ ဓာတ်ပုံသည် စိုက်ပျိုးရေးသီးနှံ သို့မဟုတ် အပင်ပုံ မဟုတ်ပါဗျာ။'
-            })
+            return jsonify({'success': False, 'disease_name': 'Unknown', 'error': 'ဓာတ်ပုံသည် အပင်ပုံ မဟုတ်ပါဗျာ။'})
 
-        # 💡 Threshold Option: စိတ်ချရမှု 55% ထက်နည်းရင် ရောဂါရှာမတွေ့ဟု သတ်မှတ်မည်
         if confidence < 0.55:
-            return jsonify({
-                'success': False, 
-                'disease_name': '', 
-                'error': 'AI မှ သေချာစွာ ခွဲခြားမရပါ။ ပုံကို ပိုမိုနီးကပ်ပြတ်သားစွာ ထပ်မံရိုက်ကူးပေးပါ။'
-            })
+            return jsonify({'success': False, 'disease_name': '', 'error': 'AI မှ သေချာစွာ ခွဲခြားမရပါ။'})
 
-        # 6. အောင်မြင်သော ရလဒ်အား PHP ဝဘ်ဆိုက်ဆီ JSON ဖြင့် ပြန်လည်ပေးပို့ခြင်း
         return jsonify({
             'success': True,
             'disease_name': predicted_name, 
             'confidence': round(confidence * 100, 2),
             'error': ''
         })
-
     except Exception as e:
-        return jsonify({
-            'success': False, 
-            'disease_name': '', 
-            'error': f'ဆာဗာအတွင်းပိုင်း Error ဖြစ်ပွားပါသည်: {str(e)}'
-        }), 500
-        
-    finally:
-        # 💡 FIXED FOR RENDER: ဓာတ်ပုံခန့်မှန်းပြီးတိုင်း ခေါင်းထဲက ယာယီ Cache RAM များကို 
-        # ချက်ချင်းပြန်ရှင်းပစ်ခြင်းဖြင့် 512MB RAM Limit ကြောင့် Server Crash ဖြစ်ခြင်းကို ကာကွယ်ပေးပါသည်
-        K.clear_session()
+        return jsonify({'success': False, 'disease_name': '', 'error': str(e)}), 500
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SERVER ENTRY POINT
-# ─────────────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
