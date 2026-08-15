@@ -56,7 +56,7 @@ def predict():
         predicted_name = class_names[predicted_class_idx]
 
         if predicted_name == 'non_plant':
-            return jsonify({'success': False, 'disease_name': 'Unknown', 'error': 'ဓာတ်ပုံသည် အပင်ပုံ မဟုတ်ပါဗျာ။'})
+            return jsonify({'success': False, 'disease_name': 'Unknown', 'error': 'တင်သွင်းထားသော ဓာတ်ပုံသည် အပင်ရွက် မဟုတ်ပါ။ ကျေးဇူးပြု၍ သီးနှံအရွက်ကိုသာ ရိုက်ကူးပါ။'})
 
         if confidence < 0.55:
             return jsonify({'success': False, 'disease_name': '', 'error': 'AI မှ သေချာစွာ ခွဲခြားမရပါ။'})
